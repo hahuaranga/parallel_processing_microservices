@@ -41,7 +41,7 @@ public class ScatterGatherConfig {
                         gatherer -> gatherer
                                 .releaseStrategy(releaseStrategySG())
                                 .outputProcessor(this::processGatheredResults)
-                                .groupTimeout(8000L)
+                                .groupTimeout(1500L)
                                 .sendPartialResultOnExpiry(true),
                         spec -> spec.errorChannel("scatterGatherErrorChannel")
                 )

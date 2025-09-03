@@ -30,8 +30,9 @@ public class IntegrationConfig {
                 .handle(Http.outboundGateway("https://www.swapi.tech/api/planets/{planetCode}")
                         .uriVariable("planetCode", "payload")
                         .httpMethod(HttpMethod.GET)
-                        .expectedResponseType(String.class),
-                        e -> e.advice(retryAdvice()))
+                        .expectedResponseType(String.class)
+                        ,e -> e.advice(retryAdvice())
+                        )
                 .transform(this::transformToPlanetResponse)
                 .channel("planet.response.channel")
                 .get();

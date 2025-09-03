@@ -38,7 +38,7 @@ public class SplitterAggregateConfig {
                         .releaseStrategy(releaseStrategySA())
                         .outputProcessor(messageGroupProcessor())
                         .messageStore(new SimpleMessageStore())
-                        .groupTimeout(8000L)
+                        .groupTimeout(1500L)
                         .sendPartialResultOnExpiry(true)
                 )
                 .channel("aggregate.output.channel")
