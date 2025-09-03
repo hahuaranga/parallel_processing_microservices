@@ -6,6 +6,7 @@ import org.springframework.integration.aggregator.HeaderAttributeCorrelationStra
 import org.springframework.integration.aggregator.MessageGroupProcessor;
 import org.springframework.integration.aggregator.ReleaseStrategy;
 import org.springframework.integration.dsl.IntegrationFlow;
+import org.springframework.integration.handler.advice.ExpressionEvaluatingRequestHandlerAdvice;
 import org.springframework.integration.splitter.MethodInvokingSplitter;
 import org.springframework.integration.store.SimpleMessageStore;
 import org.springframework.messaging.Message;
@@ -14,6 +15,7 @@ import com.example.integrationpoc.domain.model.GalacticSystemRequest;
 import com.example.integrationpoc.domain.model.PlanetResponse;
 import com.example.integrationpoc.infrastructure.integration.splitter.GalacticSystemSplitter;
 import java.util.List;
+import java.util.concurrent.Executors;
 
 /**
  * Author: hahuaranga@indracompany.com
@@ -28,15 +30,17 @@ public class SplitterAggregateConfig {
     IntegrationFlow splitterAggregateFlow() {
         return IntegrationFlow.from("splitter.input.channel")
                 .split(splitter(), null)
-                .handle("planetGateway", "getPlanetInfo")
+                .channel(c -> c.executor(Executors.newCachedThreadPool())) // <-- PARALELO
+                .handle("planetGateway", "getPlanetInfo", e -> e.advice(errorHandlingAdviceSA()))
+                .filter(PlanetResponse.class::isInstance) // <-- best-effort
                 .aggregate(aggregatorSpec -> aggregatorSpec
                         .correlationStrategy(new HeaderAttributeCorrelationStrategy("correlationId"))
-                        .releaseStrategy(releaseStrategy())
+                        .releaseStrategy(releaseStrategySA())
                         .outputProcessor(messageGroupProcessor())
                         .messageStore(new SimpleMessageStore())
                         .groupTimeout(8000L)
                         .sendPartialResultOnExpiry(true)
-                        )
+                )
                 .channel("aggregate.output.channel")
                 .get();
     }
@@ -48,7 +52,7 @@ public class SplitterAggregateConfig {
     }
 
     @Bean
-    ReleaseStrategy releaseStrategy() {
+    ReleaseStrategy releaseStrategySA() {
         return group -> group.size() == group.getOne().getHeaders().get("sequenceSize", Integer.class);
     }
 
@@ -60,10 +64,10 @@ public class SplitterAggregateConfig {
                     .filter(PlanetResponse.class::isInstance)
                     .map(PlanetResponse.class::cast)
                     .toList();
-            
-            GalacticSystemRequest originalRequest = (GalacticSystemRequest) 
+
+            GalacticSystemRequest originalRequest = (GalacticSystemRequest)
                     group.getOne().getHeaders().get("originalRequest");
-            
+
             return new ConsolidatedResponse(
                     originalRequest.nombre(),
                     planetResponses.stream()
@@ -74,5 +78,12 @@ public class SplitterAggregateConfig {
             );
         };
     }
-    
-}
+
+    @Bean
+    ExpressionEvaluatingRequestHandlerAdvice errorHandlingAdviceSA() {
+        ExpressionEvaluatingRequestHandlerAdvice advice = new ExpressionEvaluatingRequestHandlerAdvice();
+        advice.setOnFailureExpressionString("null"); // <-- devuelve null si falla
+        advice.setReturnFailureExpressionResult(true);
+        return advice;
+    }
+}	

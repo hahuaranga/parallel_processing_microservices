@@ -4,12 +4,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.integration.aggregator.ReleaseStrategy;
 import org.springframework.integration.dsl.IntegrationFlow;
+import org.springframework.integration.handler.advice.ExpressionEvaluatingRequestHandlerAdvice;
+import org.springframework.integration.store.MessageGroup;
 import org.springframework.messaging.Message;
 import com.example.integrationpoc.domain.model.ConsolidatedResponse;
 import com.example.integrationpoc.domain.model.GalacticSystemRequest;
 import com.example.integrationpoc.domain.model.PlanetResponse;
 import java.util.List;
-import org.springframework.integration.store.MessageGroup;
+import java.util.concurrent.Executors;
 
 /**
  * Author: hahuaranga@indracompany.com
@@ -29,14 +31,18 @@ public class ScatterGatherConfig {
                                 .recipientFlow(flow -> flow
                                         .enrichHeaders(h -> h
                                                 .headerExpression("originalRequest", "payload")
-                                            )                                		
-                                		.transform("payload.codigosPlanetarios") // SpEL
-                                		.split()
-                                        .handle("planetGateway", "getPlanetInfo")),
+                                        )
+                                        .transform("payload.codigosPlanetarios")
+                                        .split()
+                                        .channel(c -> c.executor(Executors.newCachedThreadPool())) // <-- PARALELO
+                                        .handle("planetGateway", "getPlanetInfo", e -> e.advice(errorHandlingAdviceSG()))
+                                        .filter(PlanetResponse.class::isInstance) // <-- best-effort
+                                ),
                         gatherer -> gatherer
-                                .releaseStrategy(releaseStrategy2())
+                                .releaseStrategy(releaseStrategySG())
                                 .outputProcessor(this::processGatheredResults)
-                                .groupTimeout(8000L),
+                                .groupTimeout(8000L)
+                                .sendPartialResultOnExpiry(true),
                         spec -> spec.errorChannel("scatterGatherErrorChannel")
                 )
                 .channel("scatter.response.channel")
@@ -44,20 +50,20 @@ public class ScatterGatherConfig {
     }
 
     @Bean
-    ReleaseStrategy releaseStrategy2() {
+    ReleaseStrategy releaseStrategySG() {
         return group -> group.size() == group.getOne().getHeaders().get("sequenceSize", Integer.class);
     }
-    
+
     private Object processGatheredResults(MessageGroup group) {
         List<PlanetResponse> planetResponses = group.getMessages().stream()
                 .map(Message::getPayload)
                 .filter(PlanetResponse.class::isInstance)
                 .map(PlanetResponse.class::cast)
                 .toList();
-        
-        GalacticSystemRequest originalRequest = (GalacticSystemRequest) 
+
+        GalacticSystemRequest originalRequest = (GalacticSystemRequest)
                 group.getOne().getHeaders().get("originalRequest");
-        
+
         return new ConsolidatedResponse(
                 originalRequest.nombre(),
                 planetResponses.stream()
@@ -67,5 +73,12 @@ public class ScatterGatherConfig {
                 java.time.Instant.now().toString()
         );
     }
-  
+
+    @Bean
+    ExpressionEvaluatingRequestHandlerAdvice errorHandlingAdviceSG() {
+        ExpressionEvaluatingRequestHandlerAdvice advice = new ExpressionEvaluatingRequestHandlerAdvice();
+        advice.setOnFailureExpressionString("null");
+        advice.setReturnFailureExpressionResult(true);
+        return advice;
+    }
 }
